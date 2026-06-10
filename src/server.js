@@ -33,23 +33,32 @@ app.get('/health', (req, res) => {
  * }
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const { lisKey } = req.body;
+  // Log the full incoming payload so we can see exactly what SSCv2 sends
+  console.log('[GIS Pre-Hook] Incoming body:', JSON.stringify(req.body, null, 2));
 
+  // SSCv2 pre-hook sends the full Case entity — try common LISKey field patterns
+  const body = req.body || {};
+  const lisKey =
+    body.lisKey ||
+    body.LisKey ||
+    body.LISKEY ||
+    body.yy1_LISKey_case ||
+    body.yy1_Liskey_case ||
+    body.yy1_LISKEY_case ||
+    (body.value && (body.value.lisKey || body.value.yy1_LISKey_case));
+
+  // If no LISKey found, pass through — do not block the Case save
   if (!lisKey) {
-    return res.status(400).json({
-      success: false,
-      error: 'lisKey is required'
-    });
+    console.warn('[GIS Pre-Hook] No LISKey found in payload — passing through');
+    return res.json({ success: true, skipped: true });
   }
 
   try {
     const location = await getLocationByLisKey(String(lisKey).trim());
 
     if (!location) {
-      return res.status(404).json({
-        success: false,
-        error: `No GIS location found for LIS Key: ${lisKey}`
-      });
+      console.warn(`[GIS Pre-Hook] No GIS record for LIS Key: ${lisKey} — passing through`);
+      return res.json({ success: true, skipped: true });
     }
 
     return res.json({
@@ -71,10 +80,8 @@ app.post('/api/location/lookup', async (req, res) => {
 
   } catch (err) {
     console.error('[GIS Lookup Error]', err.message);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal error during GIS lookup'
-    });
+    // Return 200 so the Case save is not blocked by a GIS outage
+    return res.json({ success: false, error: err.message });
   }
 });
 

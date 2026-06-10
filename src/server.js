@@ -1,5 +1,5 @@
 const express = require('express');
-const { getLocationByLisKey } = require('./gisService');
+const { getLocationByGuid } = require('./gisService');
 const { enrichCase } = require('./sscv2Service');
 
 const app = express();
@@ -19,49 +19,47 @@ app.get('/health', (req, res) => {
  * GIS Location lookup endpoint
  * POST /api/location/lookup
  *
- * Called by SAP Service Cloud V2 Pre-Hook before Case save.
- *
- * Request body:
- * { "lisKey": "12345" }
- *
- * Response:
- * {
- *   "success": true,
- *   "location": {
- *     "Street": "...", "Suburb": "...", ...
- *   }
- * }
+ * Called by SAP Service Cloud V2 Pre-Hook on Case save.
+ * Reads the confirmed GIS location GUID from currentImage.extensions,
+ * fetches the full location record from S/4HANA, and returns the
+ * enriched currentImage with all location fields populated.
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const body        = req.body || {};
+  const body         = req.body || {};
   const currentImage = body.currentImage || {};
-  const extensions  = currentImage.extensions || {};
+  const extensions   = currentImage.extensions || {};
 
-  // LISKey lives in currentImage.extensions
-  const lisKey =
-    extensions.LISKey    ||
-    extensions.Liskey    ||
-    extensions.lisKey    ||
-    extensions.LISKEY    ||
-    extensions.LisKey;
+  console.log('[GIS Pre-Hook] Extensions received:', JSON.stringify(extensions));
 
-  // No LISKey — pass through without blocking the Case save
-  if (!lisKey) {
-    console.warn('[GIS Pre-Hook] No LISKey in extensions — passing through');
+  // GUID of the confirmed GIS location — try common extension field name patterns
+  const guid =
+    extensions.GisGuid        ||
+    extensions.Guid           ||
+    extensions.GISGuid        ||
+    extensions.LocationGuid   ||
+    extensions.GisLocationGuid||
+    extensions.GISGUID        ||
+    extensions.gisGuid;
+
+  // No GUID — location not yet confirmed, pass through
+  if (!guid) {
+    console.warn('[GIS Pre-Hook] No GIS GUID in extensions — passing through');
     return res.json({ currentImage });
   }
 
-  console.log(`[GIS Pre-Hook] Looking up LISKey: ${lisKey}`);
+  console.log(`[GIS Pre-Hook] Looking up GUID: ${guid}`);
 
   try {
-    const location = await getLocationByLisKey(String(lisKey).trim());
+    const location = await getLocationByGuid(String(guid).trim());
 
     if (!location) {
-      console.warn(`[GIS Pre-Hook] No GIS record for LISKey: ${lisKey} — passing through`);
+      console.warn(`[GIS Pre-Hook] No GIS record for GUID: ${guid} — passing through`);
       return res.json({ currentImage });
     }
 
-    // Return the modified currentImage with GIS fields merged into extensions
+    console.log(`[GIS Pre-Hook] Found location: ${location.Street}, ${location.Suburb}`);
+
+    // Return currentImage with GIS fields merged into extensions
     return res.json({
       currentImage: {
         ...currentImage,
@@ -83,7 +81,6 @@ app.post('/api/location/lookup', async (req, res) => {
 
   } catch (err) {
     console.error('[GIS Lookup Error]', err.message);
-    // Pass through on error — never block the Case save
     return res.json({ currentImage });
   }
 });

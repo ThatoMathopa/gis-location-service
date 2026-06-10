@@ -1,39 +1,51 @@
 const { executeHttpRequest } = require('@sap-cloud-sdk/http-client');
 
-const DESTINATION_NAME = process.env.SSCV2_DESTINATION || 'Case_Object';
+const SSCV2_DESTINATION = process.env.SSCV2_DESTINATION || 'Case_Object';
 
 /**
- * Patches GIS location extension fields onto an SSCv2 Case.
+ * PATCHes a SSCv2 Case with GIS location fields.
  *
- * Uses the Case_Object BTP destination (HTTP, Internet) which points
- * at the Service Cloud V2 tenant.
+ * Uses the Case_Object BTP destination which points to SSCv2.
+ * The GUID from ZGIS_LOCATION equals the SSCv2 Case UUID.
  *
- * @param {string} caseId  - SSCv2 Case UUID
- * @param {object} location - GIS location record from gisService
- * @returns {void}
+ * SSCv2 Case PATCH API:
+ * PATCH /sap/c4c/odata/v1/c4codataapi/CaseCollection('<caseId>')
+ *
+ * @param {string} caseId - SSCv2 Case UUID (= ZGIS_LOCATION.GUID)
+ * @param {object} location - Location record from ZGIS_LOCATION
  */
-async function enrichCase(caseId, location) {
-  await executeHttpRequest(
-    { destinationName: DESTINATION_NAME },
+async function patchCaseLocation(caseId, location) {
+  const payload = {
+    Street:        location.Street        || '',
+    StreetNo:      location.StreetNo      || '',
+    Suburb:        location.Suburb        || '',
+    Ward:          location.Ward          || '',
+    Region:        location.Region        || '',
+    NearestCorner: location.NearestCorner || '',
+    ZPortionNo:    location.PortionNo     || '',
+    ZERFNumber:    location.Erfno         || '',
+    LISKey:        location.Liskey        || '',
+    ZGPSLongitude: location.GisX          || '',
+    ZGPSLatitude:  location.GisY          || ''
+  };
+
+  console.log('[SSCv2] Patching Case:', caseId, 'with payload:', JSON.stringify(payload));
+
+  const response = await executeHttpRequest(
+    { destinationName: SSCV2_DESTINATION },
     {
       method:  'PATCH',
-      url:     `/odata/v4/CasesService/Cases(${caseId})`,
-      headers: { 'Content-Type': 'application/json' },
-      data: {
-        // Map GIS fields to SSCv2 Case extension fields
-        yy1_Street_case:         location.Street        || '',
-        yy1_StreetNo_case:       location.StreetNo      || '',
-        yy1_Suburb_case:         location.Suburb        || '',
-        yy1_Ward_case:           location.Ward          || '',
-        yy1_Region_case:         location.Region        || '',
-        yy1_NearestCorner_case:  location.NearestCorner || '',
-        yy1_PortionNo_case:      location.PortionNo     || '',
-        yy1_ERFNumber_case:      location.Erfno         || '',
-        yy1_GPSLong_case:        location.GisX          || '',
-        yy1_GPSLat_case:         location.GisY          || ''
-      }
+      url:     `/sap/c4c/odata/v1/c4codataapi/CaseCollection('${encodeURIComponent(caseId)}')`,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept':        'application/json'
+      },
+      data: payload
     }
   );
+
+  console.log('[SSCv2] PATCH response status:', response.status);
+  return response;
 }
 
-module.exports = { enrichCase };
+module.exports = { patchCaseLocation };

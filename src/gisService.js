@@ -6,13 +6,10 @@ const BASE_URL =
   '/sap/opu/odata4/sap/zsb_gis_location/srvd_a2x/sap/zsd_gis_location/0001/GisLocation';
 
 /**
- * Primary: fetch GIS location by GUID (direct OData key lookup).
+ * Fetch GIS location by GUID (direct OData key lookup).
+ * GUID in ZGIS_LOCATION = SSCv2 Case UUID.
  *
- * Case.id in SSCv2 === ZGIS_LOCATION.GUID in S/4HANA.
- * Direct key lookup — GisLocation('<guid>') — fastest possible query.
- * Returns null on 404 so the Pre-Hook can skip silently.
- *
- * @param {string} guid - Case.id from SSCv2 payload
+ * @param {string} guid - SSCv2 Case UUID
  * @returns {object|null}
  */
 async function getLocationByGuid(guid) {
@@ -36,7 +33,7 @@ async function getLocationByGuid(guid) {
 }
 
 /**
- * Fallback: fetch by LIS Key using $filter.
+ * Fetch by LIS Key using $filter (used by Pre-Hook fallback).
  *
  * @param {string} lisKey
  * @returns {object|null}

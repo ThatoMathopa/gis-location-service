@@ -7,7 +7,7 @@ applications:
       - nodejs_buildpack
     command: node src/server.js
     routes:
-      - route: gis-location-service.cfapps.eu10.hana.ondemand.com
+      - route: gis-location-service.cfapps.eu10-004.hana.ondemand.com
     env:
       NODE_ENV: production
       S4H_DESTINATION: THD_NEW

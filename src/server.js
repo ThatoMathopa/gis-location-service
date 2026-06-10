@@ -35,16 +35,17 @@ app.get('/health', (req, res) => {
  * ALWAYS return HTTP 200 — non-200 blocks the Case save.
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const body = req.body || {};
+  const body       = req.body || {};
+  const extensions = body.currentImage?.extensions || {};
 
-  console.log('[GIS Pre-Hook] Payload keys:', Object.keys(body));
-  console.log('[GIS Pre-Hook] GUID:', body.GUID);
-  console.log('[GIS Pre-Hook] LISKey:', body.LISKey);
+  console.log('[GIS Pre-Hook] Extensions:', JSON.stringify(extensions));
 
-  // Primary: use GUID extension field
-  const guid   = body.GUID   ? String(body.GUID).trim()   : null;
-  // Fallback: use LISKey if GUID not set yet
-  const lisKey = body.LISKey ? String(body.LISKey).trim() : null;
+  // Extension fields live inside currentImage.extensions
+  const guid   = extensions.GUID   ? String(extensions.GUID).trim()   : null;
+  const lisKey = extensions.LISKey ? String(extensions.LISKey).trim() : null;
+
+  console.log('[GIS Pre-Hook] GUID:', guid);
+  console.log('[GIS Pre-Hook] LISKey:', lisKey);
 
   if (!guid && !lisKey) {
     console.warn('[GIS Pre-Hook] No GUID or LISKey in payload — returning empty value');

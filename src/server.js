@@ -1,5 +1,5 @@
 const express = require('express');
-const { getLocationByGuid, getLocationByLisKey } = require('./gisService');
+const { getLocationByGuid } = require('./gisService');
 
 const app = express();
 app.use(express.json());
@@ -40,33 +40,20 @@ app.post('/api/location/lookup', async (req, res) => {
 
   console.log('[GIS Pre-Hook] Extensions:', JSON.stringify(extensions));
 
-  // Extension fields live inside currentImage.extensions
-  const guid   = extensions.GUID   ? String(extensions.GUID).trim()   : null;
-  const lisKey = extensions.LISKey ? String(extensions.LISKey).trim() : null;
+  const guid = extensions.GUID ? String(extensions.GUID).trim() : null;
 
   console.log('[GIS Pre-Hook] GUID:', guid);
-  console.log('[GIS Pre-Hook] LISKey:', lisKey);
 
-  if (!guid && !lisKey) {
-    console.warn('[GIS Pre-Hook] No GUID or LISKey in payload — returning empty value');
+  if (!guid) {
+    console.warn('[GIS Pre-Hook] No GUID in extensions — returning empty value');
     return res.status(200).json({ value: {} });
   }
 
   try {
-    let location = null;
-
-    if (guid) {
-      console.log('[GIS Pre-Hook] Looking up by GUID:', guid);
-      location = await getLocationByGuid(guid);
-    }
-
-    if (!location && lisKey) {
-      console.log('[GIS Pre-Hook] GUID lookup failed — falling back to LISKey:', lisKey);
-      location = await getLocationByLisKey(lisKey);
-    }
+    const location = await getLocationByGuid(guid);
 
     if (!location) {
-      console.warn('[GIS Pre-Hook] No GIS record found — returning empty value');
+      console.warn(`[GIS Pre-Hook] No GIS record found for GUID: ${guid}`);
       return res.status(200).json({ value: {} });
     }
 

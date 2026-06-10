@@ -41,10 +41,10 @@ app.post('/api/location/lookup', async (req, res) => {
     extensions.GISGUID        ||
     extensions.gisGuid;
 
-  // No GUID — location not yet confirmed, pass through
+  // No GUID — location not yet confirmed, pass through with no changes
   if (!guid) {
     console.warn('[GIS Pre-Hook] No GIS GUID in extensions — passing through');
-    return res.json({ currentImage });
+    return res.json({});
   }
 
   console.log(`[GIS Pre-Hook] Looking up GUID: ${guid}`);
@@ -54,34 +54,31 @@ app.post('/api/location/lookup', async (req, res) => {
 
     if (!location) {
       console.warn(`[GIS Pre-Hook] No GIS record for GUID: ${guid} — passing through`);
-      return res.json({ currentImage });
+      return res.json({});
     }
 
     console.log(`[GIS Pre-Hook] Found location: ${location.Street}, ${location.Suburb}`);
 
-    // Return currentImage with GIS fields merged into extensions
+    // SSCv2 expects only the fields to be modified returned at root level
     return res.json({
-      currentImage: {
-        ...currentImage,
-        extensions: {
-          ...extensions,
-          Street:        location.Street        || '',
-          StreetNo:      location.StreetNo      || '',
-          Suburb:        location.Suburb        || '',
-          Ward:          location.Ward          || '',
-          Region:        location.Region        || '',
-          NearestCorner: location.NearestCorner || '',
-          PortionNo:     location.PortionNo     || '',
-          ERFNumber:     location.Erfno         || '',
-          GPSLong:       location.GisX          || '',
-          GPSLat:        location.GisY          || ''
-        }
+      extensions: {
+        ...extensions,
+        Street:        location.Street        || '',
+        StreetNo:      location.StreetNo      || '',
+        Suburb:        location.Suburb        || '',
+        Ward:          location.Ward          || '',
+        Region:        location.Region        || '',
+        NearestCorner: location.NearestCorner || '',
+        PortionNo:     location.PortionNo     || '',
+        ERFNumber:     location.Erfno         || '',
+        GPSLong:       location.GisX          || '',
+        GPSLat:        location.GisY          || ''
       }
     });
 
   } catch (err) {
     console.error('[GIS Lookup Error]', err.message);
-    return res.json({ currentImage });
+    return res.json({});
   }
 });
 

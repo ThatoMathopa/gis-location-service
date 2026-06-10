@@ -1,14 +1,11 @@
 const express = require('express');
-const { getLocationByGuid } = require('./gisService');
+const { getLocationByGuid, getLocationByLisKey } = require('./gisService');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/**
- * Health check
- */
 app.get('/health', (req, res) => {
   res.json({ status: 'UP', service: 'gis-location-service' });
 });
@@ -18,49 +15,66 @@ app.get('/health', (req, res) => {
  *
  * Called by SSCv2 External Hook (Pre-Hook) before Case save.
  *
- * SSCv2 sends extension fields only in the payload.
- * We read the GUID extension field which equals ZGIS_LOCATION.GUID.
- * The mashup writes the Case UUID into both ZGIS_LOCATION.GUID
- * and the Case GUID extension field when location is confirmed.
- *
- * Payload from SSCv2:
+ * SSCv2 sends this structure:
  * {
- *   "GUID": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
- *   "LISKey": "...",
- *   "Street": "...",
- *   ...other extension fields
+ *   "entity": "sap.crm.caseservice.entity.case",
+ *   "currentImage": {
+ *     "GUID": "a1b2c3d4-...",
+ *     "LISKey": "...",
+ *     "Street": "...",
+ *     ...all extension fields
+ *   },
+ *   "beforeImage": { ...previous state... },
+ *   "skipValidations": false,
+ *   "context": { ... }
  * }
+ *
+ * Extension fields including GUID live inside currentImage.
  *
  * Response MUST be { "value": { ...fields } } — SSCv2 requirement.
  * ALWAYS return HTTP 200 — non-200 blocks the Case save.
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const body       = req.body || {};
-  const extensions = body.currentImage?.extensions || {};
+  const body = req.body || {};
 
-  console.log('[GIS Pre-Hook] Extensions:', JSON.stringify(extensions));
+  // Extension fields are nested inside currentImage
+  const currentImage = body.currentImage || {};
 
-  const guid = extensions.GUID ? String(extensions.GUID).trim() : null;
+  console.log('[GIS Pre-Hook] Top-level keys:', Object.keys(body));
+  console.log('[GIS Pre-Hook] currentImage keys:', Object.keys(currentImage));
+  console.log('[GIS Pre-Hook] GUID from currentImage:', currentImage.GUID);
+  console.log('[GIS Pre-Hook] LISKey from currentImage:', currentImage.LISKey);
 
-  console.log('[GIS Pre-Hook] GUID:', guid);
+  // Primary: GUID extension field (set by mashup when location confirmed)
+  const guid   = currentImage.GUID   ? String(currentImage.GUID).trim()   : null;
+  // Fallback: LISKey extension field
+  const lisKey = currentImage.LISKey ? String(currentImage.LISKey).trim() : null;
 
-  if (!guid) {
-    console.warn('[GIS Pre-Hook] No GUID in extensions — returning empty value');
+  if (!guid && !lisKey) {
+    console.warn('[GIS Pre-Hook] No GUID or LISKey in currentImage — returning empty value');
     return res.status(200).json({ value: {} });
   }
 
   try {
-    const location = await getLocationByGuid(guid);
+    let location = null;
+
+    if (guid) {
+      console.log('[GIS Pre-Hook] Looking up by GUID:', guid);
+      location = await getLocationByGuid(guid);
+    }
+
+    if (!location && lisKey) {
+      console.log('[GIS Pre-Hook] GUID lookup returned null — trying LISKey:', lisKey);
+      location = await getLocationByLisKey(lisKey);
+    }
 
     if (!location) {
-      console.warn(`[GIS Pre-Hook] No GIS record found for GUID: ${guid}`);
+      console.warn('[GIS Pre-Hook] No GIS record found — returning empty value');
       return res.status(200).json({ value: {} });
     }
 
     console.log('[GIS Pre-Hook] Match found:', location.Street, location.Suburb);
 
-    // Wrap in "value" — required by SSCv2 External Hook response parser
-    // Field names must match exact Case extension field technical names
     return res.status(200).json({
       value: {
         Street:        location.Street        || '',
@@ -79,18 +93,13 @@ app.post('/api/location/lookup', async (req, res) => {
 
   } catch (err) {
     console.error('[GIS Pre-Hook Error]', err.message);
-    // Always 200 — never block the Case save
     return res.status(200).json({ value: {} });
   }
 });
 
 /**
  * POST /api/location/sync
- *
- * Direct call endpoint — used when mashup can call microservice directly.
- * Fetches location from S/4 and returns location data.
- *
- * Body: { "guid": "<zgis-location-guid>" }
+ * Direct call — body: { "guid": "<case-uuid>" }
  */
 app.post('/api/location/sync', async (req, res) => {
   const { guid } = req.body;
@@ -111,7 +120,7 @@ app.post('/api/location/sync', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Location data found for GUID ${guid}`,
+      message: `Location found for GUID ${guid}`,
       location: {
         Street:        location.Street        || '',
         StreetNo:      location.StreetNo      || '',

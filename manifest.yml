@@ -10,6 +10,6 @@ applications:
       - route: gis-location-service.cfapps.eu10.hana.ondemand.com
     env:
       NODE_ENV: production
-      S4H_DESTINATION: S4H_GIS_DEST
+      S4H_DESTINATION: THD_NEW
     services:
       - gis-destination-service

@@ -57,12 +57,14 @@ cf login -a https://api.cf.eu10.hana.ondemand.com
 cf push
 ```
 
-## BTP Destination (S4H_GIS_DEST)
+## BTP Destination (THD_NEW)
 
 Configure in BTP Cockpit → Connectivity → Destinations:
 
+- Name: `THD_NEW`
 - Type: HTTP
-- URL: https://\<your-s4h-host\>
+- Proxy Type: OnPremise (via Cloud Connector)
+- System: SAP S/4HANA DEVELOPMENT
 - Authentication: BasicAuthentication
 - Property: sap-client = \<client\>
 

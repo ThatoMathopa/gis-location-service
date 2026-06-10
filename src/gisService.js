@@ -1,6 +1,6 @@
 const { executeHttpRequest } = require('@sap-cloud-sdk/http-client');
 
-const DESTINATION_NAME = process.env.S4H_DESTINATION || 'S4H_GIS_DEST';
+const DESTINATION_NAME = process.env.S4H_DESTINATION || 'THD_NEW';
 
 const BASE_URL =
   '/sap/opu/odata4/sap/zsb_gis_location/srvd_a2x/sap/zsd_gis_location/0001/GisLocation';

@@ -1,33 +1,44 @@
 # GIS Location Service
 
-Node.js microservice running on SAP BTP Cloud Foundry (eu10).  
-Called by SAP Service Cloud V2 Pre-Hook before Case save to look up GIS location
-data from S/4HANA OData V4 service `ZSB_GIS_LOCATION` and auto-populate Case extension fields.
+Node.js microservice on SAP BTP Cloud Foundry (eu10).
+Called by SAP Service Cloud V2 Pre-Hook before Case save.
 
-## Architecture
+## Key mapping
+
+| SSCv2 | S/4HANA ZGIS_LOCATION |
+|---|---|
+| Case.id (UUID) | GUID column |
+
+The GIS picker widget embedded in the Case form confirms a location
+and writes the Case UUID into ZGIS_LOCATION.GUID. The Pre-Hook
+reads Case.id and sends it here for lookup.
+
+## Flow
 
 ```
-Service Cloud V2 Pre-Hook
-↓  POST /api/location/lookup  { lisKey }
+Agent uses GIS picker widget on Case form
+        ↓  confirms location
+        ↓  picker writes Case.id into ZGIS_LOCATION.GUID on S/4HANA
+Pre-Hook fires (Before Save)
+        ↓  reads Case.id
+        ↓  POST /api/location/lookup  { "guid": "<case-id>" }
 gis-location-service (BTP CF eu10)
-↓  OData V4 GET /GisLocation?$filter=Liskey eq '...'
-S/4HANA — ZSB_GIS_LOCATION
-↓  returns location record
-Pre-Hook populates: Street, Suburb, Ward, Region, NearestCorner, StreetNo, PortionNo, ERFNumber, GPSLong, GPSLat
+        ↓  GET GisLocation('<case-id>') from S/4HANA OData V4
+ZGIS_LOCATION on S/4HANA
+        ↓  returns full location record
+Pre-Hook sets on Case:
+   Street, StreetNo, Suburb, Ward, Region,
+   NearestCorner, PortionNo, ERFNumber,
+   LISKey, GPSLongitude, GPSLatitude
 ```
 
-## API
+## Endpoints
 
 ### POST /api/location/lookup
 
-**Request:**
 ```json
-{ "lisKey": "12345" }
-```
-
-**Response:**
-```json
-{
+Request:  { "guid": "<case-id-uuid>" }
+Response: {
   "success": true,
   "location": {
     "Street": "Main Road",
@@ -38,59 +49,94 @@ Pre-Hook populates: Street, Suburb, Ward, Region, NearestCorner, StreetNo, Porti
     "NearestCorner": "Church St",
     "PortionNo": "001",
     "Erfno": "ERF123",
+    "Liskey": "12345",
     "GisX": "28.2293",
     "GisY": "-25.7479",
-    "Guid": "ABC123..."
+    "Guid": "<case-id-uuid>"
   }
 }
 ```
 
 ### POST /api/location/enrich
 
-Full lookup + write-back: fetches GIS data from S/4HANA and PATCHes the SSCv2 Case extension fields in one call.
-
-**Request:**
 ```json
-{ "lisKey": "12345", "caseId": "uuid-of-case" }
-```
-
-**Response:**
-```json
-{ "success": true, "message": "Case <id> enriched with GIS data for LIS Key 12345" }
+Request:  { "guid": "<case-id-uuid>", "caseId": "<case-id-uuid>" }
+Response: { "success": true, "message": "Case <id> enriched", "location": { ... } }
 ```
 
 ### GET /health
 
-Returns service status.
+```json
+{ "status": "UP", "service": "gis-location-service" }
+```
 
-## Deploy to BTP Cloud Foundry
+## OData V4 endpoint (S/4HANA)
 
-```bash
-npm install
-cf login -a https://api.cf.eu10.hana.ondemand.com
-cf push
+```
+GET /sap/opu/odata4/sap/zsb_gis_location/srvd_a2x/sap/zsd_gis_location/0001/GisLocation('<guid>')
 ```
 
 ## BTP Destinations
 
 ### THD_NEW — S/4HANA (OnPremise)
 
-- Name: `THD_NEW`
-- Type: HTTP
-- Proxy Type: OnPremise (via Cloud Connector)
-- System: SAP S/4HANA DEVELOPMENT
-- Authentication: BasicAuthentication
-- Property: sap-client = \<client\>
+| Property | Value |
+|---|---|
+| Name | THD_NEW |
+| Type | HTTP |
+| Proxy Type | OnPremise (via Cloud Connector) |
+| System | SAP S/4HANA DEVELOPMENT |
+| Authentication | BasicAuthentication |
+| sap-client | your client number |
 
 ### Case_Object — Service Cloud V2 (Internet)
 
-- Name: `Case_Object`
-- Type: HTTP
-- Proxy Type: Internet
-- System: SAP Service Cloud Version 2
-- Authentication: OAuth2ClientCredentials (or as configured in your tenant)
+| Property | Value |
+|---|---|
+| Name | Case_Object |
+| Type | HTTP |
+| Proxy Type | Internet |
+| System | SAP Service Cloud Version 2 |
+| Authentication | OAuth2ClientCredentials |
+
+## Deploy
+
+```bash
+npm install
+cf login -a https://api.cf.eu10.hana.ondemand.com
+cf create-service destination lite gis-destination-service
+cf push
+```
+
+App URL after deploy:
+```
+https://gis-location-service.cfapps.eu10-004.hana.ondemand.com
+```
 
 ## Service Cloud V2 Pre-Hook
 
-- Trigger: Case → Before Save
-- Logic: If LISKey not empty → POST to /api/location/lookup → populate location extension fields
+Navigate to: **Administrator → Business Logic → Logic Editor → Case → Before Save**
+
+```
+IF id is not empty THEN
+
+  POST https://gis-location-service.cfapps.eu10-004.hana.ondemand.com/api/location/lookup
+  Headers: Content-Type = application/json
+  Body:    { "guid": "{id}" }
+
+  IF response.success = true THEN
+    SET Street        = response.location.Street
+    SET StreetNo      = response.location.StreetNo
+    SET Suburb        = response.location.Suburb
+    SET Ward          = response.location.Ward
+    SET Region        = response.location.Region
+    SET NearestCorner = response.location.NearestCorner
+    SET ZPortionNo    = response.location.PortionNo
+    SET ZERFNumber    = response.location.Erfno
+    SET LISKey        = response.location.Liskey
+    SET ZGPSLongitude = response.location.GisX
+    SET ZGPSLatitude  = response.location.GisY
+  END IF
+
+END IF
+```

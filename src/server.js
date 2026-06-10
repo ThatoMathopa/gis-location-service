@@ -1,6 +1,5 @@
 const express = require('express');
 const { getLocationByGuid } = require('./gisService');
-const { enrichCase } = require('./sscv2Service');
 
 const app = express();
 app.use(express.json());
@@ -16,53 +15,40 @@ app.get('/health', (req, res) => {
 });
 
 /**
- * GIS Location lookup endpoint
  * POST /api/location/lookup
  *
- * Called by SAP Service Cloud V2 Pre-Hook on Case save.
- * Reads the confirmed GIS location GUID from currentImage.extensions,
- * fetches the full location record from S/4HANA, and returns the
- * enriched currentImage with all location fields populated.
+ * Called by SAP Service Cloud V2 Pre-Hook before Case save.
+ *
+ * The Case `id` in SSCv2 is the same UUID stored as GUID in ZGIS_LOCATION.
+ * The GIS picker widget confirms a location and writes the Case UUID into
+ * ZGIS_LOCATION.GUID. The Pre-Hook reads Case.id and sends it here.
+ *
+ * Body:     { "guid": "<case-id-uuid>" }
+ * Response: { "success": true, "location": { Street, StreetNo, Suburb, ... } }
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const body         = req.body || {};
-  const currentImage = body.currentImage || {};
-  const extensions   = currentImage.extensions || {};
+  const { guid } = req.body;
 
-  console.log('[GIS Pre-Hook] Extensions received:', JSON.stringify(extensions));
-
-  // GUID of the confirmed GIS location — try common extension field name patterns
-  const guid =
-    extensions.GisGuid        ||
-    extensions.Guid           ||
-    extensions.GISGuid        ||
-    extensions.LocationGuid   ||
-    extensions.GisLocationGuid||
-    extensions.GISGUID        ||
-    extensions.gisGuid;
-
-  // No GUID — location not yet confirmed, pass through with no changes
-  if (!guid) {
-    console.warn('[GIS Pre-Hook] No GIS GUID in extensions — passing through');
-    return res.json({});
+  if (!guid || String(guid).trim() === '') {
+    return res.status(400).json({
+      success: false,
+      error: 'guid is required'
+    });
   }
-
-  console.log(`[GIS Pre-Hook] Looking up GUID: ${guid}`);
 
   try {
     const location = await getLocationByGuid(String(guid).trim());
 
     if (!location) {
-      console.warn(`[GIS Pre-Hook] No GIS record for GUID: ${guid} — passing through`);
-      return res.json({});
+      return res.status(404).json({
+        success: false,
+        error: `No GIS location found for GUID: ${guid}`
+      });
     }
 
-    console.log(`[GIS Pre-Hook] Found location: ${location.Street}, ${location.Suburb}`);
-
-    // SSCv2 expects only the fields to be modified returned at root level
     return res.json({
-      extensions: {
-        ...extensions,
+      success: true,
+      location: {
         Street:        location.Street        || '',
         StreetNo:      location.StreetNo      || '',
         Suburb:        location.Suburb        || '',
@@ -70,60 +56,78 @@ app.post('/api/location/lookup', async (req, res) => {
         Region:        location.Region        || '',
         NearestCorner: location.NearestCorner || '',
         PortionNo:     location.PortionNo     || '',
-        ERFNumber:     location.Erfno         || '',
-        GPSLong:       location.GisX          || '',
-        GPSLat:        location.GisY          || ''
+        Erfno:         location.Erfno         || '',
+        Liskey:        location.Liskey        || '',
+        GisX:          location.GisX          || '',
+        GisY:          location.GisY          || '',
+        Guid:          location.Guid          || ''
       }
     });
 
   } catch (err) {
     console.error('[GIS Lookup Error]', err.message);
-    return res.json({});
+    return res.status(500).json({
+      success: false,
+      error: 'Internal error during GIS lookup',
+      detail: err.message
+    });
   }
 });
 
 /**
- * GIS enrich endpoint — full lookup + Case write-back
  * POST /api/location/enrich
  *
- * Looks up GIS data by LIS Key then PATCHes the SSCv2 Case
- * extension fields via the Case_Object destination.
+ * Same as /lookup but accepts caseId explicitly for logging/tracing.
+ * Useful for direct calls outside the Pre-Hook.
  *
- * Request body:
- * { "lisKey": "12345", "caseId": "uuid-of-case" }
+ * Body:     { "guid": "<uuid>", "caseId": "<case-uuid>" }
+ * Response: { "success": true, "message": "...", "location": { ... } }
  */
 app.post('/api/location/enrich', async (req, res) => {
-  const { lisKey, caseId } = req.body;
+  const { guid, caseId } = req.body;
 
-  if (!lisKey || !caseId) {
+  if (!guid || !caseId) {
     return res.status(400).json({
       success: false,
-      error: 'lisKey and caseId are required'
+      error: 'guid and caseId are required'
     });
   }
 
   try {
-    const location = await getLocationByLisKey(String(lisKey).trim());
+    const location = await getLocationByGuid(String(guid).trim());
 
     if (!location) {
       return res.status(404).json({
         success: false,
-        error: `No GIS location found for LIS Key: ${lisKey}`
+        error: `No GIS location found for GUID: ${guid}`
       });
     }
 
-    await enrichCase(String(caseId).trim(), location);
-
     return res.json({
       success: true,
-      message: `Case ${caseId} enriched with GIS data for LIS Key ${lisKey}`
+      message: `Case ${caseId} enriched with GIS data for GUID ${guid}`,
+      location: {
+        Street:        location.Street        || '',
+        StreetNo:      location.StreetNo      || '',
+        Suburb:        location.Suburb        || '',
+        Ward:          location.Ward          || '',
+        Region:        location.Region        || '',
+        NearestCorner: location.NearestCorner || '',
+        PortionNo:     location.PortionNo     || '',
+        Erfno:         location.Erfno         || '',
+        Liskey:        location.Liskey        || '',
+        GisX:          location.GisX          || '',
+        GisY:          location.GisY          || '',
+        Guid:          location.Guid          || ''
+      }
     });
 
   } catch (err) {
     console.error('[GIS Enrich Error]', err.message);
     return res.status(500).json({
       success: false,
-      error: 'Internal error during GIS enrich'
+      error: 'Internal error during GIS enrich',
+      detail: err.message
     });
   }
 });

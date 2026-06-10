@@ -1,0 +1,22 @@
+{
+  "name": "gis-location-service",
+  "version": "1.0.0",
+  "description": "GIS Location lookup microservice for SAP Service Cloud V2 Pre-Hook",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "@sap-cloud-sdk/http-client": "^3.0.0",
+    "@sap-cloud-sdk/connectivity": "^3.0.0",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}

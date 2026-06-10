@@ -1,0 +1,15 @@
+---
+applications:
+  - name: gis-location-service
+    memory: 256M
+    instances: 1
+    buildpacks:
+      - nodejs_buildpack
+    command: node src/server.js
+    routes:
+      - route: gis-location-service.cfapps.eu10.hana.ondemand.com
+    env:
+      NODE_ENV: production
+      S4H_DESTINATION: S4H_GIS_DEST
+    services:
+      - gis-destination-service

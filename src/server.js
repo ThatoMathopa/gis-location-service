@@ -1,137 +1,50 @@
-const express = require('express');
-const { getLocationByGuid, getLocationByLisKey } = require('./gisService');
+ const express = require('express');
+  const { getLocationByGuid } = require('./gisService');
+  const { patchCaseLocation } = require('./sscv2Service');
 
-const app = express();
-app.use(express.json());
+  const app = express();
+  app.use(express.json());
+  const PORT = process.env.PORT || 3000;
 
-const PORT = process.env.PORT || 3000;
+  app.get('/health', (req, res) => res.json({ status: 'UP', service: 'gis-location-service' }));
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'UP', service: 'gis-location-service' });
-});
+  app.post('/api/location/lookup', async (req, res) => {
+    const body         = req.body || {};
+    const currentImage = body.currentImage || {};
+    const beforeImage  = body.beforeImage  || {};
+    const context      = body.context      || {};
+    const currExt      = currentImage.extensions || {};
+    const prevExt      = beforeImage.extensions  || {};
 
-/**
- * POST /api/location/lookup
- *
- * SSCv2 External Hook Pre-Hook.
- *
- * IMPORTANT: currentImage only contains CHANGED fields.
- * Standard id never changes so never appears in currentImage.
- * Extension fields only appear if changed during this save.
- * GUID only appears in extensions after mashup confirms location.
- *
- * Payload structure:
- * {
- *   entity: "...",
- *   currentImage: {
- *     extensions: { GUID: "...", LISKey: "..." }  <- only if changed
- *   },
- *   beforeImage: { id: "...", extensions: { GUID: "..." } },
- *   context: { ... },
- *   skipValidations: false
- * }
- *
- * Lookup priority:
- * 1. currentImage.extensions.GUID  (set by mashup this save)
- * 2. beforeImage.extensions.GUID   (set by mashup previous save)
- * 3. context.id or context.caseId  (Case UUID from context)
- * 4. beforeImage.id                (Case UUID from beforeImage)
- */
-app.post('/api/location/lookup', async (req, res) => {
-  const body         = req.body || {};
-  const currentImage = body.currentImage || {};
-  const beforeImage  = body.beforeImage  || {};
-  const context      = body.context      || {};
-  const currExt      = currentImage.extensions || {};
-  const prevExt      = beforeImage.extensions  || {};
+    console.log('[GIS] op:', context.operation, '| caseId:', beforeImage.id, '| GUID:', currExt.GUID);
 
-  // Full debug log — remove after confirming structure
-  console.log('[GIS Debug] context keys:', Object.keys(context));
-  console.log('[GIS Debug] context:', JSON.stringify(context));
-  console.log('[GIS Debug] beforeImage keys:', Object.keys(beforeImage));
-  console.log('[GIS Debug] beforeImage.id:', beforeImage.id);
-  console.log('[GIS Debug] beforeImage.extensions:', JSON.stringify(prevExt));
-  console.log('[GIS Debug] currentImage.extensions:', JSON.stringify(currExt));
+    const caseId = beforeImage.id || currentImage.id || context.id || context.caseId || null;
+    const guid   = currExt.GUID   || prevExt.GUID    || caseId;
 
-  // Lookup priority — find GUID from any available source
-  const guid =
-    currExt.GUID      ||
-    prevExt.GUID      ||
-    context.id        ||
-    context.caseId    ||
-    context.objectId  ||
-    beforeImage.id    ||
-    null;
+    res.status(200).end();
 
-  const lisKey =
-    currExt.LISKey    ||
-    prevExt.LISKey    ||
-    null;
+    if (!guid || !caseId) { console.warn('[GIS] skip - no guid/caseId'); return; }
 
-  console.log('[GIS Pre-Hook] Resolved GUID:', guid);
-  console.log('[GIS Pre-Hook] Resolved LISKey:', lisKey);
-
-  if (!guid && !lisKey) {
-    console.warn('[GIS Pre-Hook] No lookup key found — returning empty value');
-    return res.status(200).json({ value: {} });
-  }
-
-  try {
-    let location = null;
-
-    if (guid) {
-      console.log('[GIS Pre-Hook] Lookup by GUID:', guid);
-      location = await getLocationByGuid(guid);
-    }
-
-    if (!location && lisKey) {
-      console.log('[GIS Pre-Hook] Fallback to LISKey:', lisKey);
-      location = await getLocationByLisKey(lisKey);
-    }
-
-    if (!location) {
-      console.warn('[GIS Pre-Hook] No GIS record found — returning empty value');
-      return res.status(200).json({ value: {} });
-    }
-
-    console.log('[GIS Pre-Hook] Match found:', location.Street, location.Suburb);
-
-    return res.status(200).json({
-      value: {
-        Street:        location.Street        || '',
-        StreetNo:      location.StreetNo      || '',
-        Suburb:        location.Suburb        || '',
-        Ward:          location.Ward          || '',
-        Region:        location.Region        || '',
-        NearestCorner: location.NearestCorner || '',
-        ZPortionNo:    location.PortionNo     || '',
-        ZERFNumber:    location.Erfno         || '',
-        LISKey:        location.Liskey        || '',
-        ZGPSLongitude: location.GisX          || '',
-        ZGPSLatitude:  location.GisY          || ''
-      }
+    setImmediate(async () => {
+      try {
+        const loc = await getLocationByGuid(guid);
+        if (!loc) { console.warn('[GIS] no CPI record for', guid); return; }
+        console.log('[GIS] found', loc.Street, loc.Suburb, 'patching', caseId);
+        await patchCaseLocation(caseId, loc);
+        console.log('[GIS] patched OK', caseId);
+      } catch (e) { console.error('[GIS] error:', e.message); }
     });
+  });
 
-  } catch (err) {
-    console.error('[GIS Pre-Hook Error]', err.message);
-    return res.status(200).json({ value: {} });
-  }
-});
+  app.post('/api/location/sync', async (req, res) => {
+    const { guid } = req.body;
+    if (!guid) return res.status(400).json({ error: 'guid required' });
+    try {
+      const loc = await getLocationByGuid(String(guid).trim());
+      if (!loc) return res.status(404).json({ error: 'not found' });
+      return res.status(200).json({ success: true, location: loc });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  });
 
-app.post('/api/location/sync', async (req, res) => {
-  const { guid } = req.body;
-  if (!guid) return res.status(400).json({ success: false, error: 'guid is required' });
-  try {
-    const location = await getLocationByGuid(String(guid).trim());
-    if (!location) return res.status(404).json({ success: false, error: `No record for GUID: ${guid}` });
-    return res.status(200).json({ success: true, location });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`GIS Location Service running on port ${PORT}`);
-});
-
-module.exports = app;
+  app.listen(PORT, () => console.log('GIS Location Service running on port ' + PORT));
+  module.exports = app;

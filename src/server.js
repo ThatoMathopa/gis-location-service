@@ -1,5 +1,5 @@
 const express = require('express');
-const { getLocationByGuid } = require('./gisService');
+const { getLocationByLisKey } = require('./gisService');
 
 const app = express();
 app.use(express.json());
@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 3000;
 
 /**
  * Health check
- * GET /health
  */
 app.get('/health', (req, res) => {
   res.json({ status: 'UP', service: 'gis-location-service' });
@@ -19,94 +18,103 @@ app.get('/health', (req, res) => {
  *
  * Called by SAP Service Cloud V2 External Hook (Pre-Hook) before Case save.
  *
- * SSCv2 External Hook sends the FULL Case payload as the POST body.
- * We read Case.id which equals ZGIS_LOCATION.GUID in S/4HANA.
- * The GIS picker widget wrote the Case UUID into ZGIS_LOCATION.GUID
- * when the agent confirmed a location.
+ * SSCv2 External Hook sends ONLY extension fields in the payload — not
+ * the standard Case id. We read LISKey from extensions and use it to
+ * look up the full location record in ZGIS_LOCATION via OData V4.
  *
- * IMPORTANT: Response must be a FLAT object using exact Case extension
- * field technical names. SSCv2 maps the response directly onto the Case.
- * No wrapper like { success, location } — just the flat fields.
+ * Payload from SSCv2 (extension fields only):
+ * {
+ *   "LISKey": "12345",
+ *   "Street": "...",
+ *   "Suburb": "...",
+ *   ...other extension fields
+ * }
  *
- * Body (sent by SSCv2): full Case object including { id, Street, Suburb, ... }
- * Response: flat object with Case extension field names as keys
+ * Response MUST be wrapped in "value" key — SSCv2 requirement:
+ * { "value": { "Street": "...", "Suburb": "...", ... } }
+ *
+ * ALWAYS return HTTP 200 — non-200 blocks the Case save.
+ * Return { "value": {} } on no-match so save proceeds cleanly.
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const casePayload = req.body;
-  const caseId = casePayload?.id;
+  const body = req.body || {};
 
-  console.log('[GIS Pre-Hook] Case id:', caseId);
+  // Log full payload for debugging
+  console.log('[GIS Pre-Hook] Received payload keys:', Object.keys(body));
+  console.log('[GIS Pre-Hook] LISKey value:', body.LISKey);
 
-  if (!caseId || String(caseId).trim() === '') {
-    console.warn('[GIS Pre-Hook] No id in Case payload — skipping lookup');
-    return res.status(200).json({});
+  const lisKey = body.LISKey;
+
+  if (!lisKey || String(lisKey).trim() === '') {
+    console.warn('[GIS Pre-Hook] No LISKey in payload — returning empty value');
+    return res.status(200).json({ value: {} });
   }
 
   try {
-    const location = await getLocationByGuid(String(caseId).trim());
+    const location = await getLocationByLisKey(String(lisKey).trim());
 
     if (!location) {
-      console.warn(`[GIS Pre-Hook] No GIS record found for GUID: ${caseId}`);
-      return res.status(200).json({});
+      console.warn(`[GIS Pre-Hook] No GIS record found for LISKey: ${lisKey}`);
+      return res.status(200).json({ value: {} });
     }
 
-    console.log('[GIS Pre-Hook] Location found:', location.Street, location.Suburb);
+    console.log('[GIS Pre-Hook] Match found for LISKey:', lisKey, '→', location.Street, location.Suburb);
 
-    // Flat response — exact Case extension field technical names
-    // SSCv2 maps these directly back onto the Case before save
+    // Wrap in "value" — required by SSCv2 External Hook response parser
+    // Field names must match exact Case extension field technical names
     return res.status(200).json({
-      Street:        location.Street        || '',
-      StreetNo:      location.StreetNo      || '',
-      Suburb:        location.Suburb        || '',
-      Ward:          location.Ward          || '',
-      Region:        location.Region        || '',
-      NearestCorner: location.NearestCorner || '',
-      ZPortionNo:    location.PortionNo     || '',
-      ZERFNumber:    location.Erfno         || '',
-      LISKey:        location.Liskey        || '',
-      ZGPSLongitude: location.GisX          || '',
-      ZGPSLatitude:  location.GisY          || ''
+      value: {
+        Street:        location.Street        || '',
+        StreetNo:      location.StreetNo      || '',
+        Suburb:        location.Suburb        || '',
+        Ward:          location.Ward          || '',
+        Region:        location.Region        || '',
+        NearestCorner: location.NearestCorner || '',
+        ZPortionNo:    location.PortionNo     || '',
+        ZERFNumber:    location.Erfno         || '',
+        ZGPSLongitude: location.GisX          || '',
+        ZGPSLatitude:  location.GisY          || ''
+      }
     });
 
   } catch (err) {
     console.error('[GIS Pre-Hook Error]', err.message);
-    // Return 200 with empty body so SSCv2 doesn't block the Case save
-    return res.status(200).json({});
+    // Always 200 — never block the Case save
+    return res.status(200).json({ value: {} });
   }
 });
 
 /**
  * POST /api/location/enrich
- *
- * Alternative endpoint for direct calls outside the Pre-Hook.
- * Accepts { guid, caseId } and returns the same flat response.
+ * Direct call outside Pre-Hook. Body: { "lisKey": "...", "caseId": "..." }
  */
 app.post('/api/location/enrich', async (req, res) => {
-  const { guid, caseId } = req.body;
+  const { lisKey, caseId } = req.body;
 
-  if (!guid) {
-    return res.status(400).json({ error: 'guid is required' });
+  if (!lisKey) {
+    return res.status(400).json({ error: 'lisKey is required' });
   }
 
   try {
-    const location = await getLocationByGuid(String(guid).trim());
+    const location = await getLocationByLisKey(String(lisKey).trim());
 
     if (!location) {
-      return res.status(404).json({ error: `No GIS location found for GUID: ${guid}` });
+      return res.status(404).json({ error: `No GIS location found for LISKey: ${lisKey}` });
     }
 
     return res.status(200).json({
-      Street:        location.Street        || '',
-      StreetNo:      location.StreetNo      || '',
-      Suburb:        location.Suburb        || '',
-      Ward:          location.Ward          || '',
-      Region:        location.Region        || '',
-      NearestCorner: location.NearestCorner || '',
-      ZPortionNo:    location.PortionNo     || '',
-      ZERFNumber:    location.Erfno         || '',
-      LISKey:        location.Liskey        || '',
-      ZGPSLongitude: location.GisX          || '',
-      ZGPSLatitude:  location.GisY          || ''
+      value: {
+        Street:        location.Street        || '',
+        StreetNo:      location.StreetNo      || '',
+        Suburb:        location.Suburb        || '',
+        Ward:          location.Ward          || '',
+        Region:        location.Region        || '',
+        NearestCorner: location.NearestCorner || '',
+        ZPortionNo:    location.PortionNo     || '',
+        ZERFNumber:    location.Erfno         || '',
+        ZGPSLongitude: location.GisX          || '',
+        ZGPSLatitude:  location.GisY          || ''
+      }
     });
 
   } catch (err) {

@@ -17,118 +17,101 @@ app.get('/health', (req, res) => {
 /**
  * POST /api/location/lookup
  *
- * Called by SAP Service Cloud V2 Pre-Hook before Case save.
+ * Called by SAP Service Cloud V2 External Hook (Pre-Hook) before Case save.
  *
- * The Case `id` in SSCv2 is the same UUID stored as GUID in ZGIS_LOCATION.
- * The GIS picker widget confirms a location and writes the Case UUID into
- * ZGIS_LOCATION.GUID. The Pre-Hook reads Case.id and sends it here.
+ * SSCv2 External Hook sends the FULL Case payload as the POST body.
+ * We read Case.id which equals ZGIS_LOCATION.GUID in S/4HANA.
+ * The GIS picker widget wrote the Case UUID into ZGIS_LOCATION.GUID
+ * when the agent confirmed a location.
  *
- * Body:     { "guid": "<case-id-uuid>" }
- * Response: { "success": true, "location": { Street, StreetNo, Suburb, ... } }
+ * IMPORTANT: Response must be a FLAT object using exact Case extension
+ * field technical names. SSCv2 maps the response directly onto the Case.
+ * No wrapper like { success, location } — just the flat fields.
+ *
+ * Body (sent by SSCv2): full Case object including { id, Street, Suburb, ... }
+ * Response: flat object with Case extension field names as keys
  */
 app.post('/api/location/lookup', async (req, res) => {
-  const { guid } = req.body;
+  const casePayload = req.body;
+  const caseId = casePayload?.id;
 
-  if (!guid || String(guid).trim() === '') {
-    return res.status(400).json({
-      success: false,
-      error: 'guid is required'
-    });
+  console.log('[GIS Pre-Hook] Case id:', caseId);
+
+  if (!caseId || String(caseId).trim() === '') {
+    console.warn('[GIS Pre-Hook] No id in Case payload — skipping lookup');
+    return res.status(200).json({});
   }
 
   try {
-    const location = await getLocationByGuid(String(guid).trim());
+    const location = await getLocationByGuid(String(caseId).trim());
 
     if (!location) {
-      return res.status(404).json({
-        success: false,
-        error: `No GIS location found for GUID: ${guid}`
-      });
+      console.warn(`[GIS Pre-Hook] No GIS record found for GUID: ${caseId}`);
+      return res.status(200).json({});
     }
 
-    return res.json({
-      success: true,
-      location: {
-        Street:        location.Street        || '',
-        StreetNo:      location.StreetNo      || '',
-        Suburb:        location.Suburb        || '',
-        Ward:          location.Ward          || '',
-        Region:        location.Region        || '',
-        NearestCorner: location.NearestCorner || '',
-        PortionNo:     location.PortionNo     || '',
-        Erfno:         location.Erfno         || '',
-        Liskey:        location.Liskey        || '',
-        GisX:          location.GisX          || '',
-        GisY:          location.GisY          || '',
-        Guid:          location.Guid          || ''
-      }
+    console.log('[GIS Pre-Hook] Location found:', location.Street, location.Suburb);
+
+    // Flat response — exact Case extension field technical names
+    // SSCv2 maps these directly back onto the Case before save
+    return res.status(200).json({
+      Street:        location.Street        || '',
+      StreetNo:      location.StreetNo      || '',
+      Suburb:        location.Suburb        || '',
+      Ward:          location.Ward          || '',
+      Region:        location.Region        || '',
+      NearestCorner: location.NearestCorner || '',
+      ZPortionNo:    location.PortionNo     || '',
+      ZERFNumber:    location.Erfno         || '',
+      LISKey:        location.Liskey        || '',
+      ZGPSLongitude: location.GisX          || '',
+      ZGPSLatitude:  location.GisY          || ''
     });
 
   } catch (err) {
-    console.error('[GIS Lookup Error]', err.message);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal error during GIS lookup',
-      detail: err.message
-    });
+    console.error('[GIS Pre-Hook Error]', err.message);
+    // Return 200 with empty body so SSCv2 doesn't block the Case save
+    return res.status(200).json({});
   }
 });
 
 /**
  * POST /api/location/enrich
  *
- * Same as /lookup but accepts caseId explicitly for logging/tracing.
- * Useful for direct calls outside the Pre-Hook.
- *
- * Body:     { "guid": "<uuid>", "caseId": "<case-uuid>" }
- * Response: { "success": true, "message": "...", "location": { ... } }
+ * Alternative endpoint for direct calls outside the Pre-Hook.
+ * Accepts { guid, caseId } and returns the same flat response.
  */
 app.post('/api/location/enrich', async (req, res) => {
   const { guid, caseId } = req.body;
 
-  if (!guid || !caseId) {
-    return res.status(400).json({
-      success: false,
-      error: 'guid and caseId are required'
-    });
+  if (!guid) {
+    return res.status(400).json({ error: 'guid is required' });
   }
 
   try {
     const location = await getLocationByGuid(String(guid).trim());
 
     if (!location) {
-      return res.status(404).json({
-        success: false,
-        error: `No GIS location found for GUID: ${guid}`
-      });
+      return res.status(404).json({ error: `No GIS location found for GUID: ${guid}` });
     }
 
-    return res.json({
-      success: true,
-      message: `Case ${caseId} enriched with GIS data for GUID ${guid}`,
-      location: {
-        Street:        location.Street        || '',
-        StreetNo:      location.StreetNo      || '',
-        Suburb:        location.Suburb        || '',
-        Ward:          location.Ward          || '',
-        Region:        location.Region        || '',
-        NearestCorner: location.NearestCorner || '',
-        PortionNo:     location.PortionNo     || '',
-        Erfno:         location.Erfno         || '',
-        Liskey:        location.Liskey        || '',
-        GisX:          location.GisX          || '',
-        GisY:          location.GisY          || '',
-        Guid:          location.Guid          || ''
-      }
+    return res.status(200).json({
+      Street:        location.Street        || '',
+      StreetNo:      location.StreetNo      || '',
+      Suburb:        location.Suburb        || '',
+      Ward:          location.Ward          || '',
+      Region:        location.Region        || '',
+      NearestCorner: location.NearestCorner || '',
+      ZPortionNo:    location.PortionNo     || '',
+      ZERFNumber:    location.Erfno         || '',
+      LISKey:        location.Liskey        || '',
+      ZGPSLongitude: location.GisX          || '',
+      ZGPSLatitude:  location.GisY          || ''
     });
 
   } catch (err) {
     console.error('[GIS Enrich Error]', err.message);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal error during GIS enrich',
-      detail: err.message
-    });
+    return res.status(500).json({ error: 'Internal error', detail: err.message });
   }
 });
 

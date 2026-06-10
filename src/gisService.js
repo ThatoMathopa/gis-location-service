@@ -6,16 +6,14 @@ const BASE_URL =
   '/sap/opu/odata4/sap/zsb_gis_location/srvd_a2x/sap/zsd_gis_location/0001/GisLocation';
 
 /**
- * Primary lookup: fetch GIS location by GUID (direct OData key lookup).
+ * Primary: fetch GIS location by GUID (direct OData key lookup).
  *
  * Case.id in SSCv2 === ZGIS_LOCATION.GUID in S/4HANA.
- * The GIS picker widget embedded in the Case form confirms a location
- * and writes the Case UUID into ZGIS_LOCATION.GUID. This fetches that record.
+ * Direct key lookup — GisLocation('<guid>') — fastest possible query.
+ * Returns null on 404 so the Pre-Hook can skip silently.
  *
- * Uses direct key lookup: GisLocation('<guid>') — faster than $filter.
- *
- * @param {string} guid - The Case id from SSCv2 (= GUID in ZGIS_LOCATION)
- * @returns {object|null} Full location record or null if not found
+ * @param {string} guid - Case.id from SSCv2 payload
+ * @returns {object|null}
  */
 async function getLocationByGuid(guid) {
   try {
@@ -39,7 +37,6 @@ async function getLocationByGuid(guid) {
 
 /**
  * Fallback: fetch by LIS Key using $filter.
- * Use if the Case stores LISKey instead of GUID.
  *
  * @param {string} lisKey
  * @returns {object|null}

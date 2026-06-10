@@ -11,5 +11,6 @@ applications:
     env:
       NODE_ENV: production
       S4H_DESTINATION: THD_NEW
+      SSCV2_DESTINATION: Case_Object
     services:
       - gis-destination-service

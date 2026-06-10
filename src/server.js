@@ -33,55 +33,58 @@ app.get('/health', (req, res) => {
  * }
  */
 app.post('/api/location/lookup', async (req, res) => {
-  // Log the full incoming payload so we can see exactly what SSCv2 sends
-  console.log('[GIS Pre-Hook] Incoming body:', JSON.stringify(req.body, null, 2));
+  const body        = req.body || {};
+  const currentImage = body.currentImage || {};
+  const extensions  = currentImage.extensions || {};
 
-  // SSCv2 pre-hook sends the full Case entity — try common LISKey field patterns
-  const body = req.body || {};
+  // LISKey lives in currentImage.extensions
   const lisKey =
-    body.lisKey ||
-    body.LisKey ||
-    body.LISKEY ||
-    body.yy1_LISKey_case ||
-    body.yy1_Liskey_case ||
-    body.yy1_LISKEY_case ||
-    (body.value && (body.value.lisKey || body.value.yy1_LISKey_case));
+    extensions.LISKey    ||
+    extensions.Liskey    ||
+    extensions.lisKey    ||
+    extensions.LISKEY    ||
+    extensions.LisKey;
 
-  // If no LISKey found, pass through — do not block the Case save
+  // No LISKey — pass through without blocking the Case save
   if (!lisKey) {
-    console.warn('[GIS Pre-Hook] No LISKey found in payload — passing through');
-    return res.json({ success: true, skipped: true });
+    console.warn('[GIS Pre-Hook] No LISKey in extensions — passing through');
+    return res.json({ currentImage });
   }
+
+  console.log(`[GIS Pre-Hook] Looking up LISKey: ${lisKey}`);
 
   try {
     const location = await getLocationByLisKey(String(lisKey).trim());
 
     if (!location) {
-      console.warn(`[GIS Pre-Hook] No GIS record for LIS Key: ${lisKey} — passing through`);
-      return res.json({ success: true, skipped: true });
+      console.warn(`[GIS Pre-Hook] No GIS record for LISKey: ${lisKey} — passing through`);
+      return res.json({ currentImage });
     }
 
+    // Return the modified currentImage with GIS fields merged into extensions
     return res.json({
-      success: true,
-      location: {
-        Street:        location.Street        || '',
-        StreetNo:      location.StreetNo      || '',
-        Suburb:        location.Suburb        || '',
-        Ward:          location.Ward          || '',
-        Region:        location.Region        || '',
-        NearestCorner: location.NearestCorner || '',
-        PortionNo:     location.PortionNo     || '',
-        Erfno:         location.Erfno         || '',
-        GisX:          location.GisX          || '',
-        GisY:          location.GisY          || '',
-        Guid:          location.Guid          || ''
+      currentImage: {
+        ...currentImage,
+        extensions: {
+          ...extensions,
+          Street:        location.Street        || '',
+          StreetNo:      location.StreetNo      || '',
+          Suburb:        location.Suburb        || '',
+          Ward:          location.Ward          || '',
+          Region:        location.Region        || '',
+          NearestCorner: location.NearestCorner || '',
+          PortionNo:     location.PortionNo     || '',
+          ERFNumber:     location.Erfno         || '',
+          GPSLong:       location.GisX          || '',
+          GPSLat:        location.GisY          || ''
+        }
       }
     });
 
   } catch (err) {
     console.error('[GIS Lookup Error]', err.message);
-    // Return 200 so the Case save is not blocked by a GIS outage
-    return res.json({ success: false, error: err.message });
+    // Pass through on error — never block the Case save
+    return res.json({ currentImage });
   }
 });
 

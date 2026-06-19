@@ -1,4 +1,4 @@
- const express = require('express');
+const express = require('express');
   const { getLocationByGuid } = require('./gisService');
   const { patchCaseLocation } = require('./sscv2Service');
 
@@ -21,7 +21,7 @@
     const caseId = beforeImage.id || currentImage.id || context.id || context.caseId || null;
     const guid   = currExt.GUID   || prevExt.GUID    || caseId;
 
-    res.status(200).end();
+    res.status(200).json({ data: {} });
 
     if (!guid || !caseId) { console.warn('[GIS] skip - no guid/caseId'); return; }
 
